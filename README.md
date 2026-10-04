@@ -1,22 +1,47 @@
 # Agentic SDLC URL Shortener
 
-A Java/Spring Boot URL shortener with a lightweight SDLC orchestration layer built around one idea:
+A Java/Spring Boot URL shortener with a controlled, stateful SDLC orchestration layer.
 
-**automation should be useful, but it should also be explainable and controlled.**
+The project demonstrates how an engineering requirement can move through a structured lifecycle:
 
-The application itself provides URL shortening, redirects, expiration, click analytics, and PostgreSQL persistence. On top of that, I built an orchestration layer that takes an engineering goal, understands the type of work being requested, breaks it into dependent tasks, applies validation and approval gates, executes independent work in parallel where appropriate, and keeps an audit trail of what happened.
+```text
+REQUIREMENTS
+     |
+     v
+   DESIGN
+     |
+     +-------------------+
+     |                   |
+     v                   v
+IMPLEMENTATION       TEST_PLAN
+     |                   |
+     +---------+---------+
+               |
+               v
+            TESTING
+               |
+               v
+        DOCUMENTATION
+               |
+               v
+      RELEASE_READINESS
+```
 
-Rather than trying to make the system look artificially autonomous, I kept the orchestration deterministic and testable. The agent can make bounded decisions, but ambiguous or unsafe situations deliberately stop instead of being guessed through.
+The URL shortener provides URL creation, redirects, expiration, analytics, and PostgreSQL persistence.
+
+The orchestration layer adds requirement analysis, dependency-driven execution, parallel work, synchronization, validation and policy gates, human approval, bounded retries, dynamic replanning, fallback, rollback, safe-stop behavior, stage artifacts, audit history, and reliability metrics.
+
+The orchestration is intentionally deterministic and bounded. The goal is not unrestricted autonomy. The goal is automation that is useful, explainable, testable, and controlled.
 
 ---
 
-## What I Built
+# What I Built
 
-There are two main parts to the project:
+The project contains two main parts.
 
-### 1. URL Shortener
+## 1. URL Shortener
 
-A working Spring Boot backend that can:
+A Spring Boot backend that can:
 
 - Create short URLs
 - Generate unique 7-character short codes
@@ -27,17 +52,19 @@ A working Spring Boot backend that can:
 - Reject expired URLs
 - Persist mappings in PostgreSQL
 
-### 2. SDLC Orchestration Layer
+## 2. Agentic SDLC Orchestration Layer
 
 An orchestration API that demonstrates:
 
-- Requirement interpretation
+- Requirement understanding
 - Greenfield, brownfield, and ambiguous scenarios
+- Explicit SDLC stages
 - Task decomposition
-- Explicit task dependencies
-- Conditional execution paths
-- Parallel validation and synchronization
-- Entry, validation, policy, approval, and exit gates
+- Dependency-driven execution
+- Entry and exit gates
+- Parallel execution
+- Synchronization points
+- Validation and policy guardrails
 - Human approval checkpoints
 - Stateful workflow sessions
 - Bounded retries
@@ -45,12 +72,13 @@ An orchestration API that demonstrates:
 - Fallback behavior
 - Orchestration-level rollback
 - Safe-stop behavior
-- Decision/audit history
+- Reviewable stage artifacts
+- Decision and audit history
 - Reliability metrics
 
 ---
 
-## Tech Stack
+# Tech Stack
 
 | Area | Technology |
 |---|---|
@@ -67,7 +95,7 @@ An orchestration API that demonstrates:
 
 ---
 
-# URL Shortener
+# URL Shortener API
 
 ## Create a Short URL
 
@@ -75,20 +103,26 @@ An orchestration API that demonstrates:
 POST /api/urls
 ```
 
-Example request:
+Example:
 
 ```json
 {
-  "originalUrl": "https://www.google.com",
+  "url": "https://www.google.com"
+}
+```
+
+With expiration:
+
+```json
+{
+  "url": "https://www.google.com",
   "expirationMinutes": 30
 }
 ```
 
 `expirationMinutes` is optional.
 
-The service generates a random 7-character alphanumeric short code and checks for a collision before saving it.
-
----
+The service generates a random 7-character alphanumeric short code and checks for an existing code before persistence.
 
 ## Redirect
 
@@ -98,11 +132,9 @@ GET /{shortCode}
 
 A valid short code redirects the caller to the original URL.
 
-The redirect also increments the URL's click count.
+The redirect increments the URL's click count.
 
-Expired URLs are rejected rather than redirected.
-
----
+Expired URLs are rejected instead of being redirected.
 
 ## Analytics
 
@@ -110,23 +142,21 @@ Expired URLs are rejected rather than redirected.
 GET /api/urls/{shortCode}/analytics
 ```
 
-This returns information about the shortened URL, including its click count.
+Returns information about the shortened URL, including its click count, creation time, expiration time, and original URL.
 
 Analytics retrieval itself does not increment the click count.
 
 ---
 
-# How the Orchestration Works
+# SDLC Orchestration API
 
-The orchestration endpoint is:
+The main orchestration endpoint is:
 
 ```http
 POST /api/agent/execute
 ```
 
-A request contains an engineering goal plus the information needed to execute it.
-
-For example:
+Example:
 
 ```json
 {
@@ -136,45 +166,117 @@ For example:
 }
 ```
 
-The orchestration response includes more than the final result. It also explains how the result was reached:
+The response exposes both the final outcome and the execution history.
+
+It includes:
 
 - Session ID
+- Goal
 - Scenario classification
-- Normalized requirement
+- Requirement analysis
 - Selected workflow
-- Current status
+- Workflow status
 - Approval requirement
 - Generated short URL
-- Task list
-- Task dependencies
+- SDLC stage artifacts
+- Task information
 - Execution steps
 - Audit history
 - Reliability metrics
 
-That makes an execution inspectable rather than treating the agent as a black box.
+This makes the orchestration inspectable instead of treating it as a black box.
+
+---
+
+# Full SDLC Lifecycle
+
+A major focus of the project is orchestration across multiple engineering stages rather than wrapping a single URL-creation call.
+
+The lifecycle is:
+
+```text
+REQUIREMENTS
+     |
+     v
+   DESIGN
+     |
+     +-------------------+
+     |                   |
+     v                   v
+IMPLEMENTATION       TEST_PLAN
+     |                   |
+     +---------+---------+
+               |
+               v
+            TESTING
+               |
+               v
+        DOCUMENTATION
+               |
+               v
+      RELEASE_READINESS
+```
+
+Each stage has explicit dependencies.
+
+A stage is allowed to proceed only when the dependencies required by the `DependencyGraph` have completed.
+
+This makes workflow readiness part of the orchestration model instead of relying only on Java statement ordering.
+
+---
+
+# Stage Artifacts
+
+Each meaningful SDLC stage produces a `StageArtifact`.
+
+A stage artifact contains:
+
+```text
+stage
+name
+content
+status
+createdAt
+```
+
+Artifacts are produced for:
+
+```text
+REQUIREMENTS
+DESIGN
+IMPLEMENTATION
+TEST_PLAN
+TESTING
+DOCUMENTATION
+RELEASE_READINESS
+```
+
+These artifacts make intermediate engineering outputs visible and reviewable.
+
+A successful workflow therefore produces more than a shortened URL. It also provides evidence of how the requirement moved through the engineering lifecycle.
 
 ---
 
 # Requirement Understanding
 
-Before doing the actual work, the request is converted into a `RequirementAnalysis`.
+The first stage converts the incoming request into a `RequirementAnalysis`.
 
 It captures:
 
 - Original engineering goal
 - Normalized requirement
 - Scenario type
-- Whether the request is ambiguous
-- Assumptions being made
-- Existing components that may be affected
+- Whether the requirement is ambiguous
+- Assumptions
+- Existing components potentially affected
 
-For example, a request to enhance the existing URL shortener is treated differently from a request to build a new capability.
+The requirement analysis becomes the artifact for the `REQUIREMENTS` stage.
 
 ---
 
 # Scenario Handling
 
-I modeled three scenarios because they exercise different types of engineering reasoning.
+The orchestration supports three scenarios.
 
 ## Greenfield
 
@@ -188,30 +290,9 @@ Example:
 }
 ```
 
-The workflow treats this as a new capability and creates the corresponding implementation path.
+The request is treated as a new capability.
 
-Typical flow:
-
-```text
-Understand Requirement
-        |
-        v
-Greenfield Planning
-        |
-        v
-Select Workflow
-        |
-        v
-Validation / Policy Checks
-        |
-        v
-Execute
-        |
-        v
-Verify
-```
-
----
+The orchestration generates requirement and design outputs before moving into implementation and test planning.
 
 ## Brownfield
 
@@ -226,9 +307,9 @@ Example:
 }
 ```
 
-Here the system reasons about modifying an existing application rather than treating the request as a clean-slate implementation.
+The system treats this as a change to an existing application.
 
-The analysis identifies impacted components such as:
+The requirement analysis identifies potentially impacted components such as:
 
 ```text
 UrlShortenerController
@@ -237,13 +318,9 @@ ShortUrlRepository
 AgentOrchestrationService
 ```
 
-The assumptions also capture concerns such as maintaining existing API behavior and not breaking previously persisted URLs.
+This impact analysis is intentionally deterministic for the assessment. It demonstrates brownfield reasoning without pretending to perform unrestricted autonomous source-code analysis.
 
-This is intentionally modeled as deterministic impact analysis for the assessment; it is not pretending to perform autonomous source-code understanding.
-
----
-
-## Ambiguous Requirement
+## Ambiguous
 
 Example:
 
@@ -255,128 +332,178 @@ Example:
 }
 ```
 
-In this case, executing immediately would mean guessing.
+The workflow does not guess what the user intended.
 
-Instead, the workflow moves to:
+It produces the requirements artifact and transitions to:
 
 ```text
 WAITING_FOR_CLARIFICATION
 ```
 
-and records why it stopped.
+Downstream stages such as design and implementation are not executed.
 
-I preferred this behavior because a useful engineering agent should know when **not** to act.
-
----
-
-# Task Decomposition and Dependencies
-
-The orchestration layer does not represent the request as one large operation.
-
-It breaks work into `AgentTask` objects, and each task records the IDs of the tasks it depends on.
-
-A simplified graph looks like this:
-
-```text
-                  TASK-1
-          Understand Requirement
-                     |
-                     v
-                  TASK-2
-       Greenfield / Brownfield Plan
-                     |
-                     v
-                  TASK-3
-             Select Workflow
-                     |
-             +-------+-------+
-             |               |
-             v               v
-          TASK-4A         TASK-4B
-        URL Format         Policy
-        Validation        Validation
-             |               |
-             +-------+-------+
-                     |
-                     v
-              Synchronization
-                     |
-                     v
-          Approval / Expiration
-                     |
-                     v
-              Create Short URL
-                     |
-                     v
-                Verification
-                     |
-                     v
-                  Exit Gate
-```
-
-`DependencyGraph` keeps an explicit representation of those relationships rather than relying only on the order of Java statements.
+This is an intentional autonomy boundary.
 
 ---
 
-# Parallel Work and Synchronization
+# Dependency-Driven Execution
 
-Some tasks do not need to wait for each other.
+The SDLC stages are represented in an explicit `DependencyGraph`.
 
-URL-format validation and policy validation are independent, so they are executed concurrently using `CompletableFuture`.
+Conceptually:
 
 ```text
-                 Workflow Selected
-                        |
-              +---------+---------+
-              |                   |
-              v                   v
-       Format Validation     Policy Validation
-              |                   |
-              +---------+---------+
-                        |
-                        v
-                Synchronization
+REQUIREMENTS
+    |
+    v
+DESIGN
+    |
+    +----------------+
+    |                |
+    v                v
+IMPLEMENTATION    TEST_PLAN
+    |                |
+    +--------+-------+
+             |
+             v
+          TESTING
+             |
+             v
+      DOCUMENTATION
+             |
+             v
+    RELEASE_READINESS
 ```
 
-The workflow waits at a synchronization point until both checks have completed.
+The orchestration checks whether a stage is ready based on completed dependencies.
 
-Only then can execution continue.
+For example:
 
-This gives the orchestration a real non-linear execution path rather than representing every task as a sequential list.
+```text
+DESIGN
+depends on:
+REQUIREMENTS
+```
+
+```text
+TESTING
+depends on:
+IMPLEMENTATION
+TEST_PLAN
+```
+
+```text
+RELEASE_READINESS
+depends on:
+DOCUMENTATION
+```
+
+The dependency graph can therefore determine which work is ready rather than serving only as documentation.
+
+---
+
+# Parallel Execution and Synchronization
+
+The project demonstrates parallel execution in two places.
+
+## SDLC Branches
+
+After design is complete, implementation planning and test planning are independent.
+
+They are executed concurrently:
+
+```text
+               DESIGN
+                  |
+          +-------+-------+
+          |               |
+          v               v
+   IMPLEMENTATION     TEST_PLAN
+          |               |
+          +-------+-------+
+                  |
+                  v
+           SYNCHRONIZATION
+                  |
+                  v
+               TESTING
+```
+
+The workflow records:
+
+```text
+PARALLEL_SDLC_BRANCH
+SYNCHRONIZATION_POINT
+PARALLEL_BRANCH_SYNCHRONIZED
+```
+
+Testing cannot begin until both branches have completed.
+
+## Validation Branches
+
+URL-format validation and policy validation are also independent and run concurrently using `CompletableFuture`.
+
+```text
+           Validation Required
+                  |
+          +-------+-------+
+          |               |
+          v               v
+    URL Validation   Policy Validation
+          |               |
+          +-------+-------+
+                  |
+                  v
+            Synchronize
+```
+
+This demonstrates non-linear execution and explicit synchronization.
 
 ---
 
 # Gates and Controlled Execution
 
-I use gates to prevent the workflow from continuing simply because a previous method returned.
+The workflow contains multiple control points.
 
-### Entry Gate
+## Entry Gate
 
 Records admission into the orchestration workflow.
 
-### Validation Gate
+## Requirement Gate
 
-Prevents execution when required input is missing or cannot be safely interpreted.
+Prevents downstream work when the requirement is ambiguous.
 
-### Policy Gate
+## Dependency Gates
 
-Blocks unsupported or unsafe URL schemes.
+Prevent SDLC stages from executing before their required predecessors have completed.
 
-### Approval Gate
+## Validation Gate
+
+Prevents execution when required URL input is missing or invalid.
+
+## Policy Gate
+
+Prevents unsupported or unsafe URL schemes from reaching the side-effecting operation.
+
+## Approval Gate
 
 Pauses selected workflows until human approval is supplied.
 
-### Exit Gate
+## Release Readiness Gate
 
-Marks successful completion only after the required execution and verification stages have passed.
+Verifies that required SDLC stages completed before the workflow is considered release-ready.
+
+## Exit Gate
+
+Marks successful completion only after execution, verification, documentation, and release-readiness checks have passed.
 
 ---
 
 # Policy Guardrails
 
-Before a URL is created, the orchestration performs policy checks.
+Before URL creation, the workflow performs policy checks.
 
-For example, unsupported schemes such as these are not allowed:
+Unsupported schemes include:
 
 ```text
 file:
@@ -384,15 +511,15 @@ javascript:
 data:
 ```
 
-The current policy set is intentionally small. The important design decision is that policy enforcement happens **before** the side-effecting operation.
+Policy enforcement occurs before the side-effecting persistence operation.
 
-In a larger system, this layer could enforce security, compliance, environment, deployment, or organizational rules.
+The policy implementation is intentionally small for this assessment, but the same boundary could be extended to security, compliance, environment, deployment, or organizational policies.
 
 ---
 
 # Human Approval
 
-I used long-lived URLs as a simple example of a workflow that should require additional governance.
+Long-lived URLs demonstrate a human governance checkpoint.
 
 When:
 
@@ -400,7 +527,7 @@ When:
 expirationMinutes > 60
 ```
 
-and approval has not been supplied, execution moves to:
+and approval has not been supplied, the workflow transitions to:
 
 ```text
 WAITING_FOR_APPROVAL
@@ -416,9 +543,9 @@ Example:
 }
 ```
 
-No short URL is created at that point.
+No URL is persisted at this point.
 
-For the assessment, approval can be demonstrated by sending:
+For assessment purposes, approval can be demonstrated with:
 
 ```json
 {
@@ -429,17 +556,15 @@ For the assessment, approval can be demonstrated by sending:
 }
 ```
 
-This keeps the example simple.
-
-In production, I would use a dedicated approval endpoint and resume the original durable workflow session instead of submitting approval through a new execution request.
+A production implementation would use a dedicated approval endpoint and resume the original durable workflow rather than representing approval as a field on a new execution request.
 
 ---
 
 # Stateful Sessions
 
-Every orchestration request receives a unique `sessionId`.
+Every orchestration execution receives a unique `sessionId`.
 
-The session records:
+The session stores:
 
 ```text
 Goal
@@ -450,51 +575,22 @@ Status
 Approval state
 Reliability metrics
 Tasks
-Steps
+Execution steps
+Stage artifacts
 Audit entries
 ```
 
-Sessions are stored in a thread-safe `ConcurrentHashMap`.
+Sessions are currently stored in a thread-safe `ConcurrentHashMap`.
 
-This makes workflow state available while the application is running.
+The session can be retrieved through the orchestration session endpoint while the application is running.
 
-For production, this is one of the first things I would change: session state should live in a durable workflow or state store so an application restart cannot lose an in-progress execution.
-
----
-
-# Retry and Recovery
-
-Transient failures should not always fail the entire workflow immediately.
-
-URL creation therefore uses a bounded retry policy:
-
-```text
-Maximum attempts = 3
-```
-
-A recoverable execution might look like:
-
-```text
-Attempt 1 -> Failed
-Attempt 2 -> Successful
-             |
-             v
-          Continue
-```
-
-The response records:
-
-- Total attempts
-- Number of retries
-- Whether fallback was needed
-
-Retries are intentionally bounded so a broken dependency cannot cause an infinite execution loop.
+For production use, this state should be persisted in a durable workflow/state store so that application restarts cannot lose an in-progress workflow.
 
 ---
 
 # Dynamic Replanning
 
-A workflow can also react to information discovered during execution.
+The workflow can react to certain safe, understood failures.
 
 For example:
 
@@ -502,126 +598,81 @@ For example:
 google.com
 ```
 
-does not initially satisfy the expected HTTP/HTTPS URL format.
+does not initially satisfy the HTTP/HTTPS URL format expected by the validator.
 
-Instead of immediately giving up, the orchestration records a replanning decision and evaluates whether the input can safely be interpreted using HTTPS.
+The workflow can safely replan it as:
+
+```text
+https://google.com
+```
 
 Conceptually:
 
 ```text
-Initial Validation
-       |
-       v
-    Failed
-       |
-       v
+Initial URL
+    |
+    v
+Validation
+    |
+    v
+Invalid Format
+    |
+    v
 Replanning Decision
-       |
-       v
-Evaluate HTTPS Interpretation
-       |
-   +---+---+
-   |       |
- valid   invalid
-   |       |
-   v       v
-continue  stop
+    |
+    v
+Add HTTPS when safe
+    |
+    v
+Revalidate URL + Policy
+    |
+    +---------+
+    |         |
+  valid     invalid
+    |         |
+    v         v
+continue   safe-stop
 ```
 
-This is deliberately **bounded replanning**.
+The corrected URL becomes the effective downstream value used for URL creation.
 
-The orchestration can choose between known safe paths; it cannot arbitrarily rewrite requirements or execute unrestricted actions.
-
----
-
-# Fallback
-
-If all URL-creation attempts fail, the workflow activates a fallback policy.
-
-In this project, fallback does **not** silently switch to another persistence mechanism or pretend the operation succeeded.
-
-Instead it:
-
-1. Records that the primary path was exhausted
-2. Prevents uncontrolled continuation
-3. Enters the compensation/rollback path
-4. Preserves the failure in the audit history
-5. Safely terminates execution
-
-That choice is intentional. A fallback should not change the semantics of the requested operation just to produce a successful status.
-
----
-
-# Rollback
-
-Rollback here is an **orchestration-level compensation step**.
-
-It is important to be precise about that.
-
-If all URL-creation attempts fail, there is no successfully created short URL for the orchestration to return. The workflow therefore abandons further progression, records rollback, preserves its failed state, and safely stops.
-
-It does **not** claim to delete an already committed database record.
-
-For a production workflow involving multiple successful side effects, I would implement explicit compensating operations or transactional boundaries for each resource that needs to be reversed.
-
----
-
-# Safe Stop
-
-There are situations where continuing automatically would be worse than stopping.
-
-Examples include:
+The workflow records the change using audit events such as:
 
 ```text
-Ambiguous requirement
-Missing required input
-Policy violation
-Retry exhaustion
+UPSTREAM_OUTPUT_CHANGED
+DOWNSTREAM_REPLAN
 ```
 
-These conditions produce an explicit stopped or failed workflow state instead of allowing execution to drift forward.
+This is bounded replanning.
 
-This is one of the main ways controlled autonomy is enforced in the project.
+The orchestration can choose a predefined safe correction. It cannot arbitrarily rewrite requirements or execute unrestricted actions.
 
 ---
 
-# Audit Trail and Decision Lineage
+# Retry and Recovery
 
-Each meaningful orchestration event becomes an `AuditEntry`.
-
-Examples include:
+URL creation uses a bounded retry policy.
 
 ```text
-SESSION_CREATED
-ENTRY_GATE
-REQUIREMENT_ANALYZED
-PARALLEL_BRANCH_SYNCHRONIZED
-APPROVAL_REQUIRED
-EXECUTION_ATTEMPT
-REPLAN_DECISION
-FALLBACK_ACTIVATED
-ROLLBACK
-SAFE_STOP
-EXIT_GATE
-WORKFLOW_COMPLETED
+Maximum attempts = 3
 ```
 
-Each entry records:
+Example:
 
 ```text
-Timestamp
-Action
-Status
-Details
+Attempt 1 -> Failure
+      |
+      v
+Retry
+      |
+      v
+Attempt 2 -> Success
+      |
+      v
+Continue Workflow
 ```
 
-Because of that, a completed or failed workflow can be inspected afterward to understand **what happened and why**.
-
----
-
-# Reliability Metrics
-
-Each orchestration response includes execution-level reliability information:
+The response records:
 
 ```text
 attemptsUsed
@@ -632,7 +683,125 @@ replanned
 executionTimeMs
 ```
 
-For example:
+Retries are intentionally bounded to prevent infinite execution loops.
+
+---
+
+# Fallback
+
+If all URL-creation attempts fail, the primary execution path is considered exhausted.
+
+Fallback does not silently change persistence mechanisms or pretend the request succeeded.
+
+Instead, the workflow:
+
+1. Records exhaustion of the primary path
+2. Prevents uncontrolled continuation
+3. Activates fallback
+4. Enters the compensation/rollback path
+5. Preserves failure information in the audit trail
+6. Safely terminates execution
+
+This keeps failure semantics explicit.
+
+---
+
+# Rollback
+
+Rollback in this project is an orchestration-level compensation mechanism.
+
+If URL creation fails after all retry attempts, the workflow:
+
+```text
+Stops downstream progression
+        |
+        v
+Records fallback
+        |
+        v
+Records rollback
+        |
+        v
+Enters safe-stop state
+```
+
+It does not claim to reverse an already committed distributed transaction.
+
+For a production workflow containing multiple successful side effects, explicit compensating operations or transactional boundaries would be needed.
+
+---
+
+# Safe Stop
+
+The workflow deliberately stops when continuing automatically would be unsafe or misleading.
+
+Examples include:
+
+```text
+Ambiguous requirement
+Missing required URL
+Policy violation
+Retry exhaustion
+Unrecoverable validation failure
+```
+
+These situations produce explicit waiting or failed states rather than allowing execution to drift forward.
+
+---
+
+# Audit Trail and Decision Lineage
+
+Meaningful orchestration events are represented by `AuditEntry`.
+
+Examples include:
+
+```text
+SESSION_CREATED
+ENTRY_GATE
+REQUIREMENT_ANALYZED
+SDLC_DEPENDENCY_GRAPH_CREATED
+STAGE_COMPLETED
+PARALLEL_BRANCH_SYNCHRONIZED
+APPROVAL_REQUIRED
+EXECUTION_ATTEMPT
+REPLAN_DECISION
+UPSTREAM_OUTPUT_CHANGED
+DOWNSTREAM_REPLAN
+FALLBACK_ACTIVATED
+ROLLBACK
+SAFE_STOP
+RELEASE_READINESS
+EXIT_GATE
+WORKFLOW_COMPLETED
+```
+
+Each audit entry records information such as:
+
+```text
+Timestamp
+Action
+Status
+Details
+```
+
+This provides decision lineage for both successful and failed workflows.
+
+---
+
+# Reliability Metrics
+
+Every orchestration response includes execution-level reliability information.
+
+```text
+attemptsUsed
+retriesUsed
+fallbackActivated
+rollbackTriggered
+replanned
+executionTimeMs
+```
+
+Example:
 
 ```json
 {
@@ -645,9 +814,9 @@ For example:
 }
 ```
 
-These are per-execution metrics.
+These metrics are currently per execution.
 
-For a production system, I would aggregate them across workflow runs to track things such as:
+A production system could aggregate them across workflows to track:
 
 ```text
 Success rate
@@ -662,93 +831,57 @@ Spring Boot Actuator is also enabled for application-level health and metrics.
 
 ---
 
-# Example Successful Orchestration
-
-Request:
-
-```json
-{
-  "goal": "Create a new URL shortening capability",
-  "url": "https://www.google.com",
-  "scenarioType": "GREENFIELD"
-}
-```
-
-A successful response contains information similar to:
-
-```json
-{
-  "sessionId": "generated-session-id",
-  "goal": "Create a new URL shortening capability",
-  "scenarioType": "GREENFIELD",
-  "workflowType": "STANDARD_URL",
-  "status": "COMPLETED",
-  "message": "URL shortening workflow completed successfully",
-  "shortUrl": "http://localhost:8080/abc1234",
-  "approvalRequired": false,
-  "reliabilityMetrics": {
-    "attemptsUsed": 1,
-    "retriesUsed": 0,
-    "fallbackActivated": false,
-    "rollbackTriggered": false,
-    "replanned": false,
-    "executionTimeMs": 10
-  }
-}
-```
-
-The actual response additionally includes requirement analysis, tasks, execution steps, and audit history.
-
----
-
 # High-Level Architecture
 
 ```text
                          Client / Postman
                                |
-               +---------------+---------------+
-               |                               |
-               v                               v
+                +--------------+--------------+
+                |                             |
+                v                             v
        URL Shortener API              Orchestration API
-               |                               |
-               v                               v
-     UrlShortenerService             Requirement Analysis
-               |                               |
-               v                               v
-      ShortUrlRepository             Scenario Classification
-               |                               |
-               v                               v
-          PostgreSQL                  Dependency Graph
-                                               |
-                                     +---------+---------+
-                                     |                   |
-                                     v                   v
-                               URL Validation      Policy Validation
-                                     |                   |
-                                     +---------+---------+
-                                               |
-                                               v
+                |                             |
+                v                             v
+      UrlShortenerService             Requirement Analysis
+                |                             |
+                v                             v
+       ShortUrlRepository                  DESIGN
+                |                             |
+                v                     +-------+-------+
+           PostgreSQL                 |               |
+                                      v               v
+                               IMPLEMENTATION     TEST_PLAN
+                                      |               |
+                                      +-------+-------+
+                                              |
+                                              v
                                        Synchronization
-                                               |
-                                               v
+                                              |
+                                              v
+                                      Validation / Policy
+                                              |
+                                              v
                                       Governance Gates
-                                               |
-                                               v
-                                       URL Execution
-                                               |
-                                     +---------+---------+
-                                     |                   |
-                                     v                   v
-                                  Success              Failure
-                                     |                   |
-                                     v                   v
-                                  Verify          Retry / Replan
-                                     |                   |
-                                     v                   v
-                                 Exit Gate       Fallback / Rollback
-                                                         |
-                                                         v
-                                                     Safe Stop
+                                              |
+                                              v
+                                        URL Execution
+                                              |
+                                     +--------+--------+
+                                     |                 |
+                                     v                 v
+                                  Success            Failure
+                                     |                 |
+                                     v                 v
+                                  TESTING        Retry / Replan
+                                     |                 |
+                                     v                 v
+                              DOCUMENTATION     Fallback / Rollback
+                                     |                 |
+                                     v                 v
+                            RELEASE_READINESS      Safe Stop
+                                     |
+                                     v
+                                  Exit Gate
 ```
 
 ---
@@ -796,6 +929,8 @@ src/main/java/com/neha/urlshortener
     │   ├── RequirementAnalysis.java
     │   ├── RetryPolicy.java
     │   ├── ScenarioType.java
+    │   ├── SdlcStage.java
+    │   ├── StageArtifact.java
     │   └── WorkflowType.java
     |
     └── service
@@ -808,15 +943,11 @@ src/main/java/com/neha/urlshortener
 
 ## Prerequisites
 
-You will need:
-
 ```text
 Java 17+
 Docker
 Docker Compose
 ```
-
-Clone the repository and move into the project directory.
 
 Start the supporting services:
 
@@ -824,7 +955,7 @@ Start the supporting services:
 docker compose up -d
 ```
 
-On Windows, run the application with:
+On Windows:
 
 ```powershell
 .\mvnw.cmd spring-boot:run
@@ -836,7 +967,7 @@ On macOS/Linux:
 ./mvnw spring-boot:run
 ```
 
-The application starts on:
+The application starts at:
 
 ```text
 http://localhost:8080
@@ -848,7 +979,7 @@ http://localhost:8080
 
 Local configuration supports environment-variable overrides.
 
-For example:
+Example:
 
 ```yaml
 spring:
@@ -858,13 +989,21 @@ spring:
     password: ${DB_PASSWORD:urlpassword}
 ```
 
-The defaults make the Docker-based local environment easy to start, while external configuration can be supplied in other environments.
+The defaults support the local Docker environment while allowing external configuration for other environments.
 
 ---
 
 # Testing
 
-The orchestration unit tests currently cover twelve behaviors:
+The project currently contains:
+
+```text
+14 orchestration behavior tests
+1 application-level placeholder/smoke test
+15 tests total
+```
+
+The orchestration tests cover:
 
 | # | Scenario |
 |---:|---|
@@ -878,103 +1017,153 @@ The orchestration unit tests currently cover twelve behaviors:
 | 8 | Ambiguous requirement safe-stop |
 | 9 | Temporary failure and retry |
 | 10 | Retry exhaustion, fallback, rollback, and safe-stop |
-| 11 | Dynamic replanning |
+| 11 | Dynamic URL replanning and downstream propagation |
 | 12 | Reliability metric generation |
+| 13 | Complete seven-stage SDLC lifecycle |
+| 14 | Parallel SDLC execution and synchronization |
 
-Run all tests on Windows:
+Run the complete test suite on Windows:
 
 ```powershell
-.\mvnw.cmd test
+.\mvnw.cmd clean test
 ```
 
 On macOS/Linux:
 
 ```bash
-./mvnw test
+./mvnw clean test
 ```
 
-The URL-shortener APIs were also manually exercised using Postman for URL creation, redirect behavior, analytics, expiration, and invalid/missing URL cases.
+Current validated result:
+
+```text
+Tests run: 15
+Failures: 0
+Errors: 0
+BUILD SUCCESS
+```
+
+The URL-shortener APIs can also be exercised through Postman for URL creation, redirects, analytics, expiration, and invalid/missing URL cases.
 
 ---
 
-# A Few Engineering Decisions
+# Engineering Decisions
 
-### Why PostgreSQL?
+## Why PostgreSQL?
 
-Shortened URL mappings are durable application state. PostgreSQL gives the service transactional persistence and a straightforward path for indexing and scaling the data model.
+Shortened URL mappings are durable application state.
 
-### Why `SecureRandom`?
+PostgreSQL provides transactional persistence and a straightforward path for indexing and extending the data model.
 
-Short codes should not follow an easily predictable sequence. The service uses `SecureRandom` over an alphanumeric character set and checks for an existing code before persistence.
+## Why `SecureRandom`?
 
-### Why an explicit dependency graph?
+Short codes should not follow an easily predictable sequence.
 
-A workflow is easier to reason about when dependencies are part of the model rather than being implied by method order.
+The URL service uses `SecureRandom` over an alphanumeric character set and checks for an existing short code before persistence.
 
-It also gives a natural path toward scheduling ready tasks independently in a more advanced orchestration engine.
+## Why an explicit dependency graph?
 
-### Why deterministic orchestration instead of an LLM everywhere?
+A workflow is easier to understand when dependencies are represented directly rather than implied by source-code order.
 
-I wanted the execution layer to remain predictable.
+`DependencyGraph` provides readiness checks that the orchestration uses to decide whether a stage can proceed.
 
-An LLM could be useful for interpreting a natural-language requirement or proposing a plan, but actions such as persistence, policy enforcement, approvals, retries, and rollback should still operate inside explicit engineering controls.
+This also provides a foundation for a more general scheduler that could execute all currently ready tasks independently.
 
-This separation keeps the system easier to test, explain, and audit.
+## Why stage artifacts?
 
-### Why bounded autonomy?
+A workflow should expose intermediate engineering outcomes rather than only a final success/failure result.
+
+`StageArtifact` makes requirements, design, implementation planning, testing, documentation, and release-readiness outputs reviewable.
+
+## Why deterministic orchestration?
+
+The execution layer should remain predictable and auditable.
+
+An LLM could be useful at the planning boundary for interpreting natural-language requirements or proposing a task graph. However, persistence, policies, approvals, retries, and rollback should remain behind explicit engineering controls.
+
+This separation makes the system easier to test, reason about, and audit.
+
+## Why bounded autonomy?
 
 Not every uncertain situation should be solved automatically.
 
 The workflow deliberately stops or waits when:
 
-- the requirement is unclear
-- a policy rule fails
-- human approval is required
-- retries are exhausted
+- Requirements are ambiguous
+- Required input is missing
+- Policy validation fails
+- Human approval is required
+- Retries are exhausted
 
-The goal is not maximum automation. The goal is **safe and useful automation**.
+The goal is safe and useful automation rather than maximum autonomy.
 
 ---
 
 # Current Limitations
 
-This is an assessment implementation, so I intentionally kept several pieces lightweight.
+This is an assessment implementation, so several components are intentionally lightweight.
 
-### In-memory workflow state
+## Deterministic Runtime
 
-`ConcurrentHashMap` is used for orchestration sessions.
+The runtime does not currently call an external LLM API.
 
-A restart loses that state. A production implementation should persist sessions in a durable store.
+AI-assisted development was used during implementation, while runtime orchestration remains deterministic and testable.
 
-### Simplified approval flow
+A future version could introduce an LLM at the planning boundary while retaining deterministic execution controls.
 
-Approval is represented by the `approved` request field.
+## In-Memory Workflow State
 
-A production version should expose approval/resume APIs tied to the original session.
+`ConcurrentHashMap` stores orchestration sessions.
 
-### Orchestration-level rollback
+Application restarts therefore lose session state.
 
-Rollback currently represents workflow compensation after the creation operation has failed.
+A production implementation should use durable workflow/state storage.
 
-It is not presented as a distributed transaction or database compensation mechanism.
+## Simplified Approval Flow
 
-### Bounded replanning
+Approval is represented using the `approved` request field.
 
-Replanning uses predefined safe behavior rather than arbitrary autonomous modification.
+A production implementation should expose dedicated approval/resume APIs tied to the original durable workflow session.
 
-### Lightweight policy engine
+## Orchestration-Level Rollback
 
-The current policies demonstrate where enforcement belongs. A real enterprise system would likely externalize policy configuration.
+Rollback represents workflow compensation after execution failure.
 
-### Execution-level reliability metrics
+It is not a distributed transaction or database rollback mechanism.
 
-Metrics are captured for each orchestration response but are not yet aggregated into historical SLO dashboards.
+## Bounded Replanning
+
+Replanning currently supports predefined safe corrections rather than arbitrary autonomous modification.
+
+## Lightweight Policy Engine
+
+Policies demonstrate where enforcement belongs, but they are currently embedded in the orchestration implementation.
+
+A larger system would likely externalize policy configuration.
+
+## Retry Strategy
+
+Retries are bounded, but the current implementation does not include sophisticated error classification or exponential backoff.
+
+## Per-Execution Reliability Metrics
+
+Reliability metrics are captured per workflow execution but are not aggregated into historical SLO dashboards.
+
+## In-Memory Session Growth
+
+Sessions are not currently expired or evicted automatically.
+
+A production implementation should define retention and cleanup policies.
+
+## Persistence and Scaling Improvements
+
+Additional production work could include schema migrations, stronger short-code uniqueness guarantees under concurrency, and atomic click-count updates.
 
 ---
 
 # If I Took This Further
 
-The next production-oriented improvements I would make are:
+The next production-oriented improvements would include:
 
 - Durable orchestration state
 - Dedicated approval and workflow-resume APIs
@@ -984,16 +1173,21 @@ The next production-oriented improvements I would make are:
 - Rate limiting
 - Structured error classification
 - Exponential retry backoff
-- Distributed workers or a durable workflow engine
+- Durable workflow workers
 - Compensating transactions for multi-resource workflows
 - OpenTelemetry tracing
 - Prometheus/Grafana dashboards
-- Aggregate reliability/SLO reporting
+- Aggregate reliability and SLO reporting
 - Externalized policy rules
 - Dead-letter handling
+- Schema migrations
+- Atomic analytics updates
+- Stronger database-level short-code uniqueness handling
 - Redis caching where it provides measurable value
 
-For a more agentic version, I would add an LLM at the **planning boundary** to interpret natural-language requirements and propose task graphs, while keeping actual execution behind the existing deterministic gates, policies, approvals, and audit controls.
+For a more agentic runtime, I would add an LLM at the planning boundary to interpret natural-language requirements and propose task graphs.
+
+The generated plan would still be validated and executed through the existing dependency checks, gates, policies, approval boundaries, retry limits, audit trail, and safe-stop controls.
 
 ---
 
@@ -1002,44 +1196,51 @@ For a more agentic version, I would add an LLM at the **planning boundary** to i
 | Area | Implementation |
 |---|---|
 | Functional URL shortener | Spring Boot REST service + PostgreSQL |
-| Requirement understanding | `RequirementAnalysis` |
-| Greenfield scenario | Explicit greenfield planning path |
-| Brownfield scenario | Existing-system impact path |
-| Ambiguous scenario | Clarification gate / safe stop |
+| Requirement understanding | `RequirementAnalysis` + requirements artifact |
+| Greenfield scenario | Explicit greenfield path |
+| Brownfield scenario | Existing-system impact analysis |
+| Ambiguous scenario | Clarification boundary / safe-stop |
+| Full SDLC lifecycle | Seven explicit `SdlcStage` values |
+| Reviewable outputs | `StageArtifact` |
 | Task decomposition | `AgentTask` |
-| Dependencies | `DependencyGraph` |
-| Non-linear workflow | Conditional branches and scenario paths |
-| Parallel execution | `CompletableFuture` validation branches |
-| Synchronization | Explicit join before execution |
-| Gates | Entry, validation, policy, approval, exit |
+| Dependencies | Executable `DependencyGraph` readiness checks |
+| Non-linear workflow | Conditional and parallel paths |
+| Parallel SDLC work | Implementation + test-plan branches |
+| Parallel validation | URL + policy validation |
+| Synchronization | Explicit joins before dependent work |
+| Gates | Entry, requirement, dependency, validation, policy, approval, release and exit controls |
 | Human approval | Long-lived URL approval checkpoint |
-| Stateful execution | Session state + session ID |
+| Stateful execution | Session ID + in-memory session state |
 | Retry | Bounded 3-attempt policy |
-| Dynamic replanning | Safe URL-format replanning path |
+| Dynamic replanning | Safe HTTPS normalization with downstream propagation |
 | Fallback | Controlled fallback after retry exhaustion |
 | Rollback | Orchestration-level compensation |
-| Safe stop | Explicit stopped/failed execution paths |
+| Safe stop | Explicit waiting/failed paths |
 | Policy guardrails | URL scheme policy validation |
-| Auditability | Timestamped `AuditEntry` history |
-| Reliability | Attempts, retries, fallback, rollback, replan, duration |
-| Automated testing | 12 orchestration behavior tests |
+| Auditability | Timestamped decision/audit history |
+| Reliability | Attempts, retries, fallback, rollback, replan, execution time |
+| Automated testing | 14 orchestration tests + 1 application test |
+
+---
+
+# AI-Assisted Development
+
+AI-assisted development tools were used during the implementation process for brainstorming, debugging support, code review, test refinement, and documentation.
+
+The runtime itself does not depend on an external LLM API.
+
+The final implementation uses deterministic orchestration for execution so that dependencies, gates, policies, retries, approvals, replanning decisions, and failure handling remain explicit and testable.
 
 ---
 
 # Final Notes
 
-The URL shortener is intentionally straightforward; the more interesting part of this exercise for me was deciding **where automation should continue and where it should stop**.
+The URL shortener is intentionally straightforward.
 
-The orchestration layer can classify work, create dependent execution paths, run independent checks concurrently, retry temporary failures, replan within defined boundaries, and expose the reasoning behind an execution.
+The main engineering focus of this project is the orchestration around it: moving a requirement through explicit SDLC stages while deciding when automation can safely continue and when human input or a controlled stop is required.
 
-At the same time, ambiguity, policy failures, approval requirements, and exhausted retries remain explicit boundaries.
+The workflow can understand and classify a request, generate reviewable stage outputs, enforce dependencies, execute independent work concurrently, synchronize branches, apply governance gates, retry bounded failures, replan within predefined limits, preserve decision lineage, and expose reliability information.
 
-That balance between automation and engineering control is the main design principle behind the project.
+At the same time, ambiguity, policy violations, approval requirements, and exhausted retries remain explicit boundaries.
 
----
-
-## AI-Assisted Development
-
-AI-assisted development tools were used as part of the implementation workflow for brainstorming, debugging support, code review, and documentation refinement.
-
-The final implementation, engineering decisions, test behavior, trade-offs, and project structure were reviewed and validated against the intended behavior of the application.
+That balance between automation and engineering control is the central design principle of the project.

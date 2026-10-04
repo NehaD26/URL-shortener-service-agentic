@@ -31,40 +31,78 @@ public class AgentOrchestrationService {
 
         long startTime = System.currentTimeMillis();
 
-        String sessionId =
-                UUID.randomUUID().toString();
+        String sessionId = UUID.randomUUID().toString();
 
-        List<AgentStep> steps =
-                new ArrayList<>();
-
-        List<AgentTask> tasks =
-                new ArrayList<>();
-
-        List<AuditEntry> auditTrail =
-                new ArrayList<>();
+        List<AgentStep> steps = new ArrayList<>();
+        List<AgentTask> tasks = new ArrayList<>();
+        List<StageArtifact> stageArtifacts = new ArrayList<>();
+        List<AuditEntry> auditTrail = new ArrayList<>();
+        List<String> completedTasks = new ArrayList<>();
 
         DependencyGraph dependencyGraph =
-                new DependencyGraph();
+                buildSdlcDependencyGraph();
 
         int attemptsUsed = 0;
         boolean fallbackActivated = false;
         boolean rollbackTriggered = false;
         boolean replanned = false;
 
+        String effectiveUrl = request.url();
+
         auditTrail.add(new AuditEntry(
                 LocalDateTime.now(),
                 "SESSION_CREATED",
                 "COMPLETED",
-                "Stateful orchestration session created"
+                "Stateful SDLC orchestration session created"
         ));
 
         // =====================================================
         // ENTRY GATE
         // =====================================================
 
+        if (request.goal() == null ||
+                request.goal().isBlank()) {
+
+            steps.add(new AgentStep(
+                    "ENTRY_GATE",
+                    "Engineering goal is required before SDLC execution",
+                    "FAILED"
+            ));
+
+            auditTrail.add(new AuditEntry(
+                    LocalDateTime.now(),
+                    "ENTRY_GATE",
+                    "FAILED",
+                    "Workflow rejected because the engineering goal is missing"
+            ));
+
+            return storeAndRespond(
+                    sessionId,
+                    request,
+                    ScenarioType.AMBIGUOUS,
+                    null,
+                    null,
+                    "FAILED",
+                    "Engineering goal is required",
+                    null,
+                    false,
+                    metrics(
+                            attemptsUsed,
+                            fallbackActivated,
+                            rollbackTriggered,
+                            replanned,
+                            startTime
+                    ),
+                    steps,
+                    tasks,
+                    stageArtifacts,
+                    auditTrail
+            );
+        }
+
         steps.add(new AgentStep(
                 "ENTRY_GATE",
-                "Validate that orchestration may begin",
+                "Initial request admitted into the governed SDLC workflow",
                 "COMPLETED"
         ));
 
@@ -72,11 +110,11 @@ public class AgentOrchestrationService {
                 LocalDateTime.now(),
                 "ENTRY_GATE",
                 "COMPLETED",
-                "Request admitted into orchestration workflow"
+                "Request admitted into orchestration"
         ));
 
         // =====================================================
-        // REQUIREMENT UNDERSTANDING
+        // STAGE 1 — REQUIREMENTS
         // =====================================================
 
         ScenarioType scenarioType =
@@ -85,54 +123,63 @@ public class AgentOrchestrationService {
         RequirementAnalysis requirementAnalysis =
                 analyzeRequirement(request, scenarioType);
 
-        dependencyGraph.addTask(
-                "TASK-1",
-                List.of()
-        );
+        if (!dependencyGraph.isReady(
+                "REQUIREMENTS",
+                completedTasks)) {
+
+            throw new IllegalStateException(
+                    "Requirements stage dependencies are not satisfied"
+            );
+        }
 
         tasks.add(new AgentTask(
-                "TASK-1",
-                "Understand Requirement",
-                "Interpret intent and normalize the engineering problem",
-                List.of(),
+                "REQUIREMENTS",
+                "Requirements Analysis",
+                "Interpret intent, identify ambiguity, assumptions and impacted components",
+                dependencyGraph.getDependencies("REQUIREMENTS"),
                 "COMPLETED"
         ));
 
         steps.add(new AgentStep(
-                "UNDERSTAND_REQUIREMENT",
+                "REQUIREMENTS",
                 requirementAnalysis.normalizedRequirement(),
                 "COMPLETED"
         ));
 
+        stageArtifacts.add(new StageArtifact(
+                SdlcStage.REQUIREMENTS,
+                "Requirements Specification",
+                buildRequirementsArtifact(requirementAnalysis),
+                "COMPLETED",
+                LocalDateTime.now()
+        ));
+
+        completedTasks.add("REQUIREMENTS");
+
         auditTrail.add(new AuditEntry(
                 LocalDateTime.now(),
-                "REQUIREMENT_ANALYZED",
+                "REQUIREMENTS_COMPLETED",
                 "COMPLETED",
-                "Scenario classified as " + scenarioType
+                "Requirements artifact produced; scenario=" + scenarioType
         ));
 
         // =====================================================
-        // AMBIGUOUS SCENARIO
+        // AMBIGUOUS REQUIREMENT SAFE STOP
         // =====================================================
 
         if (scenarioType == ScenarioType.AMBIGUOUS) {
 
-            dependencyGraph.addTask(
-                    "TASK-2",
-                    List.of("TASK-1")
-            );
-
             tasks.add(new AgentTask(
-                    "TASK-2",
-                    "Clarify Requirement",
-                    "Request clarification before implementation",
-                    List.of("TASK-1"),
+                    "CLARIFICATION",
+                    "Human Clarification",
+                    "Resolve requirement ambiguity before architecture and implementation",
+                    List.of("REQUIREMENTS"),
                     "WAITING"
             ));
 
             steps.add(new AgentStep(
                     "CLARIFICATION_GATE",
-                    "Requirement ambiguity prevents safe execution",
+                    "Requirement ambiguity prevents safe downstream execution",
                     "WAITING"
             ));
 
@@ -140,17 +187,8 @@ public class AgentOrchestrationService {
                     LocalDateTime.now(),
                     "SAFE_STOP_FOR_CLARIFICATION",
                     "WAITING",
-                    "Execution stopped instead of guessing"
+                    "Architecture and implementation were not started because requirements are ambiguous"
             ));
-
-            ReliabilityMetrics metrics =
-                    metrics(
-                            attemptsUsed,
-                            fallbackActivated,
-                            rollbackTriggered,
-                            replanned,
-                            startTime
-                    );
 
             return storeAndRespond(
                     sessionId,
@@ -159,57 +197,69 @@ public class AgentOrchestrationService {
                     requirementAnalysis,
                     null,
                     "WAITING_FOR_CLARIFICATION",
-                    "Clarification is required before the agent can continue",
+                    "Clarification is required before the SDLC workflow can continue",
                     null,
                     true,
-                    metrics,
+                    metrics(
+                            attemptsUsed,
+                            fallbackActivated,
+                            rollbackTriggered,
+                            replanned,
+                            startTime
+                    ),
                     steps,
                     tasks,
+                    stageArtifacts,
                     auditTrail
             );
         }
 
         // =====================================================
-        // GREENFIELD / BROWNFIELD
+        // STAGE 2 — DESIGN
         // =====================================================
 
-        dependencyGraph.addTask(
-                "TASK-2",
-                List.of("TASK-1")
+        requireReady(
+                dependencyGraph,
+                "DESIGN",
+                completedTasks
         );
 
-        if (scenarioType == ScenarioType.GREENFIELD) {
+        String designContent =
+                buildDesignArtifact(
+                        scenarioType,
+                        requirementAnalysis
+                );
 
-            tasks.add(new AgentTask(
-                    "TASK-2",
-                    "Greenfield Planning",
-                    "Plan a new implementation path",
-                    List.of("TASK-1"),
-                    "COMPLETED"
-            ));
+        tasks.add(new AgentTask(
+                "DESIGN",
+                "Architecture and Design",
+                "Produce architecture decisions and identify system impacts",
+                dependencyGraph.getDependencies("DESIGN"),
+                "COMPLETED"
+        ));
 
-            steps.add(new AgentStep(
-                    "GREENFIELD_PLANNING",
-                    "New capability implementation plan created",
-                    "COMPLETED"
-            ));
+        steps.add(new AgentStep(
+                "DESIGN",
+                "Architecture and design artifact produced",
+                "COMPLETED"
+        ));
 
-        } else {
+        stageArtifacts.add(new StageArtifact(
+                SdlcStage.DESIGN,
+                "Architecture Design",
+                designContent,
+                "COMPLETED",
+                LocalDateTime.now()
+        ));
 
-            tasks.add(new AgentTask(
-                    "TASK-2",
-                    "Brownfield Analysis",
-                    "Analyze impacted existing components",
-                    List.of("TASK-1"),
-                    "COMPLETED"
-            ));
+        completedTasks.add("DESIGN");
 
-            steps.add(new AgentStep(
-                    "BROWNFIELD_ANALYSIS",
-                    "Existing controllers, services, repositories and orchestration impacts analyzed",
-                    "COMPLETED"
-            ));
-        }
+        auditTrail.add(new AuditEntry(
+                LocalDateTime.now(),
+                "DESIGN_COMPLETED",
+                "COMPLETED",
+                "Architecture/design completed after requirements gate"
+        ));
 
         // =====================================================
         // WORKFLOW SELECTION
@@ -220,31 +270,19 @@ public class AgentOrchestrationService {
                         ? WorkflowType.EXPIRING_URL
                         : WorkflowType.STANDARD_URL;
 
-        dependencyGraph.addTask(
-                "TASK-3",
-                List.of("TASK-2")
-        );
-
-        tasks.add(new AgentTask(
-                "TASK-3",
-                "Select Workflow",
-                "Choose execution branch based on request properties",
-                List.of("TASK-2"),
-                "COMPLETED"
-        ));
-
-        steps.add(new AgentStep(
-                "SELECT_WORKFLOW",
-                "Selected workflow: " + workflowType,
-                "COMPLETED"
+        auditTrail.add(new AuditEntry(
+                LocalDateTime.now(),
+                "WORKFLOW_SELECTED",
+                "COMPLETED",
+                "Selected workflow: " + workflowType
         ));
 
         // =====================================================
-        // URL ENTRY GATE
+        // URL INPUT GATE
         // =====================================================
 
-        if (request.url() == null ||
-                request.url().isBlank()) {
+        if (effectiveUrl == null ||
+                effectiveUrl.isBlank()) {
 
             steps.add(new AgentStep(
                     "URL_ENTRY_GATE",
@@ -256,17 +294,8 @@ public class AgentOrchestrationService {
                     LocalDateTime.now(),
                     "URL_ENTRY_GATE",
                     "FAILED",
-                    "URL cannot be null or empty"
+                    "Implementation cannot proceed without a URL"
             ));
-
-            ReliabilityMetrics metrics =
-                    metrics(
-                            attemptsUsed,
-                            fallbackActivated,
-                            rollbackTriggered,
-                            replanned,
-                            startTime
-                    );
 
             return storeAndRespond(
                     sessionId,
@@ -278,51 +307,139 @@ public class AgentOrchestrationService {
                     "Workflow failed because the URL is missing",
                     null,
                     false,
-                    metrics,
+                    metrics(
+                            attemptsUsed,
+                            fallbackActivated,
+                            rollbackTriggered,
+                            replanned,
+                            startTime
+                    ),
                     steps,
                     tasks,
+                    stageArtifacts,
                     auditTrail
             );
         }
 
         // =====================================================
-        // PARALLEL VALIDATION
+        // PARALLEL SDLC BRANCH
+        //
+        // DESIGN
+        //   |---- IMPLEMENTATION
+        //   |---- TEST_PLAN
+        //
+        // Both become ready after DESIGN.
         // =====================================================
 
-        dependencyGraph.addTask(
-                "TASK-4A",
-                List.of("TASK-3")
-        );
+        List<String> readyAfterDesign =
+                dependencyGraph.getReadyTasks(completedTasks);
 
-        dependencyGraph.addTask(
-                "TASK-4B",
-                List.of("TASK-3")
-        );
+        if (!readyAfterDesign.contains("IMPLEMENTATION") ||
+                !readyAfterDesign.contains("TEST_PLAN")) {
+
+            throw new IllegalStateException(
+                    "Expected implementation and test-plan branches to be ready after design"
+            );
+        }
+
+        final String implementationUrl = effectiveUrl;
+
+        CompletableFuture<String> implementationPlanning =
+                CompletableFuture.supplyAsync(
+                        () -> buildImplementationArtifact(
+                                scenarioType,
+                                implementationUrl,
+                                workflowType
+                        )
+                );
+
+        CompletableFuture<String> testPlanning =
+                CompletableFuture.supplyAsync(
+                        () -> buildTestPlanArtifact(
+                                workflowType
+                        )
+                );
+
+        CompletableFuture.allOf(
+                implementationPlanning,
+                testPlanning
+        ).join();
+
+        String implementationArtifact =
+                implementationPlanning.join();
+
+        String testPlanArtifact =
+                testPlanning.join();
 
         tasks.add(new AgentTask(
-                "TASK-4A",
-                "URL Format Validation",
-                "Validate URL format in parallel",
-                List.of("TASK-3"),
+                "IMPLEMENTATION",
+                "Implementation",
+                "Prepare the implementation/change plan",
+                dependencyGraph.getDependencies("IMPLEMENTATION"),
                 "COMPLETED"
         ));
 
+        stageArtifacts.add(new StageArtifact(
+                SdlcStage.IMPLEMENTATION,
+                "Implementation Plan",
+                implementationArtifact,
+                "COMPLETED",
+                LocalDateTime.now()
+        ));
+
+        completedTasks.add("IMPLEMENTATION");
+
         tasks.add(new AgentTask(
-                "TASK-4B",
-                "Policy Validation",
-                "Validate URL policy rules in parallel",
-                List.of("TASK-3"),
+                "TEST_PLAN",
+                "Test Planning",
+                "Prepare validation strategy in parallel with implementation planning",
+                dependencyGraph.getDependencies("TEST_PLAN"),
                 "COMPLETED"
         ));
+
+        stageArtifacts.add(new StageArtifact(
+                SdlcStage.TEST_PLAN,
+                "Test Plan",
+                testPlanArtifact,
+                "COMPLETED",
+                LocalDateTime.now()
+        ));
+
+        completedTasks.add("TEST_PLAN");
+
+        steps.add(new AgentStep(
+                "PARALLEL_SDLC_BRANCH",
+                "Implementation planning and test planning executed in parallel",
+                "COMPLETED"
+        ));
+
+        steps.add(new AgentStep(
+                "SYNCHRONIZATION_POINT",
+                "Implementation and test-plan branches synchronized before testing",
+                "COMPLETED"
+        ));
+
+        auditTrail.add(new AuditEntry(
+                LocalDateTime.now(),
+                "PARALLEL_BRANCH_SYNCHRONIZED",
+                "COMPLETED",
+                "IMPLEMENTATION and TEST_PLAN completed; TESTING is now eligible"
+        ));
+
+        // =====================================================
+        // IMPLEMENTATION VALIDATION
+        // =====================================================
+
+        String validationUrl = effectiveUrl;
 
         CompletableFuture<Boolean> formatValidation =
                 CompletableFuture.supplyAsync(
-                        () -> isValidUrl(request.url())
+                        () -> isValidUrl(validationUrl)
                 );
 
         CompletableFuture<Boolean> policyValidation =
                 CompletableFuture.supplyAsync(
-                        () -> passesPolicy(request.url())
+                        () -> passesPolicy(validationUrl)
                 );
 
         CompletableFuture.allOf(
@@ -336,19 +453,6 @@ public class AgentOrchestrationService {
         boolean policyValid =
                 policyValidation.join();
 
-        steps.add(new AgentStep(
-                "SYNCHRONIZATION_POINT",
-                "Parallel validation branches synchronized",
-                "COMPLETED"
-        ));
-
-        auditTrail.add(new AuditEntry(
-                LocalDateTime.now(),
-                "PARALLEL_BRANCH_SYNCHRONIZED",
-                "COMPLETED",
-                "URL format and policy validation completed"
-        ));
-
         // =====================================================
         // DYNAMIC REPLANNING
         // =====================================================
@@ -356,45 +460,66 @@ public class AgentOrchestrationService {
         if (!formatValid) {
 
             ReplanningDecision decision =
-                    replanForInvalidUrl(request.url());
+                    replanForInvalidUrl(effectiveUrl);
 
             replanned = decision.replanned();
+
+            if (replanned &&
+                    effectiveUrl != null &&
+                    !effectiveUrl.contains("://")) {
+
+                String previousUrl = effectiveUrl;
+
+                effectiveUrl =
+                        "https://" + effectiveUrl;
+
+                auditTrail.add(new AuditEntry(
+                        LocalDateTime.now(),
+                        "UPSTREAM_OUTPUT_CHANGED",
+                        "COMPLETED",
+                        "Execution input changed from "
+                                + previousUrl
+                                + " to "
+                                + effectiveUrl
+                ));
+
+                auditTrail.add(new AuditEntry(
+                        LocalDateTime.now(),
+                        "DOWNSTREAM_REPLAN",
+                        "COMPLETED",
+                        "Implementation validation was recalculated after normalized input changed"
+                ));
+            }
 
             steps.add(new AgentStep(
                     "DYNAMIC_REPLAN",
                     decision.newPlan(),
-                    "COMPLETED"
-            ));
-
-            auditTrail.add(new AuditEntry(
-                    LocalDateTime.now(),
-                    "REPLAN_DECISION",
-                    "COMPLETED",
-                    decision.reason()
+                    replanned
+                            ? "COMPLETED"
+                            : "FAILED"
             ));
 
             formatValid =
-                    isValidUrlAfterReplan(
-                            request.url()
-                    );
+                    isValidUrl(effectiveUrl);
+
+            policyValid =
+                    passesPolicy(effectiveUrl);
         }
 
         if (!formatValid) {
 
             steps.add(new AgentStep(
                     "VALIDATION_GATE",
-                    "URL format validation failed after replanning",
+                    "URL format validation failed after bounded replanning",
                     "FAILED"
             ));
 
-            ReliabilityMetrics metrics =
-                    metrics(
-                            attemptsUsed,
-                            fallbackActivated,
-                            rollbackTriggered,
-                            replanned,
-                            startTime
-                    );
+            auditTrail.add(new AuditEntry(
+                    LocalDateTime.now(),
+                    "VALIDATION_GATE",
+                    "FAILED",
+                    "No safe automatic URL correction was available"
+            ));
 
             return storeAndRespond(
                     sessionId,
@@ -406,9 +531,16 @@ public class AgentOrchestrationService {
                     "URL format validation failed",
                     null,
                     false,
-                    metrics,
+                    metrics(
+                            attemptsUsed,
+                            fallbackActivated,
+                            rollbackTriggered,
+                            replanned,
+                            startTime
+                    ),
                     steps,
                     tasks,
+                    stageArtifacts,
                     auditTrail
             );
         }
@@ -417,7 +549,7 @@ public class AgentOrchestrationService {
 
             steps.add(new AgentStep(
                     "POLICY_GATE",
-                    "URL rejected by policy guardrail",
+                    "URL rejected by security policy guardrail",
                     "FAILED"
             ));
 
@@ -427,15 +559,6 @@ public class AgentOrchestrationService {
                     "FAILED",
                     "Unsafe URL scheme rejected"
             ));
-
-            ReliabilityMetrics metrics =
-                    metrics(
-                            attemptsUsed,
-                            fallbackActivated,
-                            rollbackTriggered,
-                            replanned,
-                            startTime
-                    );
 
             return storeAndRespond(
                     sessionId,
@@ -447,15 +570,22 @@ public class AgentOrchestrationService {
                     "URL rejected by policy guardrail",
                     null,
                     false,
-                    metrics,
+                    metrics(
+                            attemptsUsed,
+                            fallbackActivated,
+                            rollbackTriggered,
+                            replanned,
+                            startTime
+                    ),
                     steps,
                     tasks,
+                    stageArtifacts,
                     auditTrail
             );
         }
 
         // =====================================================
-        // HUMAN APPROVAL
+        // CONTROLLED AUTONOMY / APPROVAL GATE
         // =====================================================
 
         boolean approvalRequired =
@@ -467,10 +597,10 @@ public class AgentOrchestrationService {
                 !Boolean.TRUE.equals(request.approved())) {
 
             tasks.add(new AgentTask(
-                    "TASK-5",
+                    "APPROVAL",
                     "Human Approval",
-                    "Require approval for long-lived URL",
-                    List.of("TASK-4A", "TASK-4B"),
+                    "Require human approval for a high-impact long-lived URL",
+                    List.of("IMPLEMENTATION", "TEST_PLAN"),
                     "WAITING"
             ));
 
@@ -484,17 +614,8 @@ public class AgentOrchestrationService {
                     LocalDateTime.now(),
                     "APPROVAL_REQUIRED",
                     "WAITING",
-                    "Execution paused at governance checkpoint"
+                    "Controlled autonomy boundary reached; execution paused"
             ));
-
-            ReliabilityMetrics metrics =
-                    metrics(
-                            attemptsUsed,
-                            fallbackActivated,
-                            rollbackTriggered,
-                            replanned,
-                            startTime
-                    );
 
             return storeAndRespond(
                     sessionId,
@@ -503,49 +624,25 @@ public class AgentOrchestrationService {
                     requirementAnalysis,
                     workflowType,
                     "WAITING_FOR_APPROVAL",
-                    "Human approval is required before execution can continue",
+                    "Human approval is required before implementation execution can continue",
                     null,
                     true,
-                    metrics,
+                    metrics(
+                            attemptsUsed,
+                            fallbackActivated,
+                            rollbackTriggered,
+                            replanned,
+                            startTime
+                    ),
                     steps,
                     tasks,
+                    stageArtifacts,
                     auditTrail
             );
         }
 
         // =====================================================
-        // EXPIRATION BRANCH
-        // =====================================================
-
-        String creationDependency =
-                "TASK-4A";
-
-        if (workflowType ==
-                WorkflowType.EXPIRING_URL) {
-
-            tasks.add(new AgentTask(
-                    "TASK-5",
-                    "Validate Expiration",
-                    "Validate expiration settings",
-                    List.of(
-                            "TASK-4A",
-                            "TASK-4B"
-                    ),
-                    "COMPLETED"
-            ));
-
-            steps.add(new AgentStep(
-                    "VALIDATE_EXPIRATION",
-                    "Expiration configuration validated",
-                    "COMPLETED"
-            ));
-
-            creationDependency =
-                    "TASK-5";
-        }
-
-        // =====================================================
-        // BOUNDED RETRIES
+        // EXECUTE IMPLEMENTATION WITH BOUNDED RETRIES
         // =====================================================
 
         ShortUrl shortUrl = null;
@@ -561,35 +658,34 @@ public class AgentOrchestrationService {
 
                 auditTrail.add(new AuditEntry(
                         LocalDateTime.now(),
-                        "EXECUTION_ATTEMPT",
+                        "IMPLEMENTATION_ATTEMPT",
                         "RUNNING",
                         "Attempt " + attempt
                 ));
 
                 shortUrl =
-                        urlShortenerService
-                                .shortenUrl(
-                                        request.url(),
-                                        request.expirationMinutes()
-                                );
+                        urlShortenerService.shortenUrl(
+                                effectiveUrl,
+                                request.expirationMinutes()
+                        );
 
                 auditTrail.add(new AuditEntry(
                         LocalDateTime.now(),
-                        "EXECUTION_ATTEMPT",
+                        "IMPLEMENTATION_ATTEMPT",
                         "COMPLETED",
-                        "Succeeded on attempt " + attempt
+                        "Implementation execution succeeded on attempt "
+                                + attempt
                 ));
 
                 break;
 
             } catch (Exception exception) {
 
-                lastException =
-                        exception;
+                lastException = exception;
 
                 auditTrail.add(new AuditEntry(
                         LocalDateTime.now(),
-                        "EXECUTION_ATTEMPT",
+                        "IMPLEMENTATION_ATTEMPT",
                         "FAILED",
                         "Attempt " + attempt + " failed"
                 ));
@@ -597,16 +693,17 @@ public class AgentOrchestrationService {
         }
 
         // =====================================================
-        // FALLBACK + ROLLBACK + SAFE STOP
+        // FALLBACK + COMPENSATING ROLLBACK + SAFE STOP
         // =====================================================
 
         if (shortUrl == null) {
 
             fallbackActivated = true;
+            rollbackTriggered = true;
 
             steps.add(new AgentStep(
                     "FALLBACK",
-                    "Primary execution path exhausted bounded retries",
+                    "Primary implementation path exhausted bounded retries",
                     "COMPLETED"
             ));
 
@@ -614,14 +711,12 @@ public class AgentOrchestrationService {
                     LocalDateTime.now(),
                     "FALLBACK_ACTIVATED",
                     "COMPLETED",
-                    "Fallback policy activated"
+                    "Fallback policy activated after retry exhaustion"
             ));
-
-            rollbackTriggered = true;
 
             steps.add(new AgentStep(
                     "ROLLBACK",
-                    "Rollback executed to prevent partial workflow state",
+                    "Compensating rollback marked the orchestration execution as failed",
                     "COMPLETED"
             ));
 
@@ -629,35 +724,19 @@ public class AgentOrchestrationService {
                     LocalDateTime.now(),
                     "ROLLBACK",
                     "COMPLETED",
-                    "No successful ShortUrl persisted; orchestration state marked failed"
+                    "No successful ShortUrl result was accepted; workflow state was not advanced"
             ));
 
             steps.add(new AgentStep(
                     "SAFE_STOP",
-                    "Unsafe continuation prevented",
+                    "Unsafe continuation into testing and release readiness prevented",
                     "FAILED"
-            ));
-
-            auditTrail.add(new AuditEntry(
-                    LocalDateTime.now(),
-                    "SAFE_STOP",
-                    "FAILED",
-                    "Stopped after bounded retry exhaustion"
             ));
 
             String failureMessage =
                     lastException == null
                             ? "Unknown failure"
                             : lastException.getMessage();
-
-            ReliabilityMetrics metrics =
-                    metrics(
-                            attemptsUsed,
-                            fallbackActivated,
-                            rollbackTriggered,
-                            replanned,
-                            startTime
-                    );
 
             return storeAndRespond(
                     sessionId,
@@ -666,72 +745,293 @@ public class AgentOrchestrationService {
                     requirementAnalysis,
                     workflowType,
                     "FAILED",
-                    "URL creation failed after bounded retries: "
+                    "Implementation failed after bounded retries: "
                             + failureMessage,
                     null,
                     approvalRequired,
-                    metrics,
+                    metrics(
+                            attemptsUsed,
+                            fallbackActivated,
+                            rollbackTriggered,
+                            replanned,
+                            startTime
+                    ),
                     steps,
                     tasks,
+                    stageArtifacts,
                     auditTrail
             );
         }
 
         // =====================================================
-        // VERIFY + EXIT GATE
+        // STAGE 5 — TESTING
+        //
+        // TESTING cannot execute until BOTH:
+        // IMPLEMENTATION and TEST_PLAN are complete.
         // =====================================================
 
-        tasks.add(new AgentTask(
-                "TASK-6",
-                "Create Short URL",
-                "Generate and persist shortened URL",
-                List.of(creationDependency),
-                "COMPLETED"
-        ));
+        requireReady(
+                dependencyGraph,
+                "TESTING",
+                completedTasks
+        );
+
+        boolean persistedResultValid =
+                shortUrl.getShortCode() != null
+                        &&
+                        !shortUrl.getShortCode().isBlank()
+                        &&
+                        shortUrl.getOriginalUrl() != null
+                        &&
+                        shortUrl.getOriginalUrl()
+                                .equals(effectiveUrl);
+
+        if (!persistedResultValid) {
+
+            tasks.add(new AgentTask(
+                    "TESTING",
+                    "Testing and Validation",
+                    "Validate implementation output against requirements",
+                    dependencyGraph.getDependencies("TESTING"),
+                    "FAILED"
+            ));
+
+            stageArtifacts.add(new StageArtifact(
+                    SdlcStage.TESTING,
+                    "Validation Result",
+                    "Generated result failed post-implementation verification.",
+                    "FAILED",
+                    LocalDateTime.now()
+            ));
+
+            steps.add(new AgentStep(
+                    "TESTING_GATE",
+                    "Implementation output failed validation",
+                    "FAILED"
+            ));
+
+            auditTrail.add(new AuditEntry(
+                    LocalDateTime.now(),
+                    "TESTING_FAILED",
+                    "FAILED",
+                    "Release pipeline stopped because implementation output did not satisfy validation"
+            ));
+
+            return storeAndRespond(
+                    sessionId,
+                    request,
+                    scenarioType,
+                    requirementAnalysis,
+                    workflowType,
+                    "FAILED",
+                    "Implementation completed but validation failed",
+                    null,
+                    approvalRequired,
+                    metrics(
+                            attemptsUsed,
+                            fallbackActivated,
+                            rollbackTriggered,
+                            replanned,
+                            startTime
+                    ),
+                    steps,
+                    tasks,
+                    stageArtifacts,
+                    auditTrail
+            );
+        }
 
         tasks.add(new AgentTask(
-                "TASK-7",
-                "Verify Result",
-                "Verify generated short URL",
-                List.of("TASK-6"),
+                "TESTING",
+                "Testing and Validation",
+                "Validate implementation output against requirements and test plan",
+                dependencyGraph.getDependencies("TESTING"),
                 "COMPLETED"
         ));
 
-        steps.add(new AgentStep(
-                "RESULT_VERIFICATION",
-                "Generated short URL verified",
-                "COMPLETED"
+        stageArtifacts.add(new StageArtifact(
+                SdlcStage.TESTING,
+                "Validation Result",
+                "URL format and policy checks passed; "
+                        + "short URL was generated and persisted successfully; "
+                        + "result verification passed.",
+                "COMPLETED",
+                LocalDateTime.now()
         ));
 
+        completedTasks.add("TESTING");
+
         steps.add(new AgentStep(
-                "EXIT_GATE",
-                "Required completion criteria satisfied",
+                "TESTING",
+                "Implementation output validated successfully",
                 "COMPLETED"
         ));
 
         auditTrail.add(new AuditEntry(
                 LocalDateTime.now(),
-                "EXIT_GATE",
+                "TESTING_COMPLETED",
                 "COMPLETED",
-                "Workflow met completion criteria"
+                "Testing stage passed after implementation and test-plan synchronization"
+        ));
+
+        // =====================================================
+        // STAGE 6 — DOCUMENTATION
+        // =====================================================
+
+        requireReady(
+                dependencyGraph,
+                "DOCUMENTATION",
+                completedTasks
+        );
+
+        tasks.add(new AgentTask(
+                "DOCUMENTATION",
+                "Documentation",
+                "Produce reviewable implementation and operational documentation",
+                dependencyGraph.getDependencies("DOCUMENTATION"),
+                "COMPLETED"
+        ));
+
+        stageArtifacts.add(new StageArtifact(
+                SdlcStage.DOCUMENTATION,
+                "Documentation Summary",
+                buildDocumentationArtifact(
+                        scenarioType,
+                        workflowType,
+                        effectiveUrl
+                ),
+                "COMPLETED",
+                LocalDateTime.now()
+        ));
+
+        completedTasks.add("DOCUMENTATION");
+
+        steps.add(new AgentStep(
+                "DOCUMENTATION",
+                "Documentation artifact produced",
+                "COMPLETED"
+        ));
+
+        auditTrail.add(new AuditEntry(
+                LocalDateTime.now(),
+                "DOCUMENTATION_COMPLETED",
+                "COMPLETED",
+                "Reviewable documentation artifact generated"
+        ));
+
+        // =====================================================
+        // STAGE 7 — RELEASE READINESS
+        // =====================================================
+
+        requireReady(
+                dependencyGraph,
+                "RELEASE_READINESS",
+                completedTasks
+        );
+
+        boolean releaseReady =
+                completedTasks.contains("REQUIREMENTS")
+                        &&
+                        completedTasks.contains("DESIGN")
+                        &&
+                        completedTasks.contains("IMPLEMENTATION")
+                        &&
+                        completedTasks.contains("TEST_PLAN")
+                        &&
+                        completedTasks.contains("TESTING")
+                        &&
+                        completedTasks.contains("DOCUMENTATION")
+                        &&
+                        persistedResultValid;
+
+        if (!releaseReady) {
+
+            tasks.add(new AgentTask(
+                    "RELEASE_READINESS",
+                    "Release Readiness",
+                    "Evaluate final SDLC completion criteria",
+                    dependencyGraph.getDependencies("RELEASE_READINESS"),
+                    "FAILED"
+            ));
+
+            stageArtifacts.add(new StageArtifact(
+                    SdlcStage.RELEASE_READINESS,
+                    "Release Readiness Assessment",
+                    "Release blocked because one or more required SDLC stages or validation gates failed.",
+                    "FAILED",
+                    LocalDateTime.now()
+            ));
+
+            steps.add(new AgentStep(
+                    "EXIT_GATE",
+                    "Release readiness criteria were not satisfied",
+                    "FAILED"
+            ));
+
+            return storeAndRespond(
+                    sessionId,
+                    request,
+                    scenarioType,
+                    requirementAnalysis,
+                    workflowType,
+                    "FAILED",
+                    "Release readiness gate failed",
+                    null,
+                    approvalRequired,
+                    metrics(
+                            attemptsUsed,
+                            fallbackActivated,
+                            rollbackTriggered,
+                            replanned,
+                            startTime
+                    ),
+                    steps,
+                    tasks,
+                    stageArtifacts,
+                    auditTrail
+            );
+        }
+
+        tasks.add(new AgentTask(
+                "RELEASE_READINESS",
+                "Release Readiness",
+                "Evaluate final SDLC completion criteria",
+                dependencyGraph.getDependencies("RELEASE_READINESS"),
+                "COMPLETED"
+        ));
+
+        stageArtifacts.add(new StageArtifact(
+                SdlcStage.RELEASE_READINESS,
+                "Release Readiness Assessment",
+                "Requirements, design, implementation, test planning, "
+                        + "testing and documentation completed successfully. "
+                        + "Required governance and validation gates passed.",
+                "COMPLETED",
+                LocalDateTime.now()
+        ));
+
+        completedTasks.add("RELEASE_READINESS");
+
+        steps.add(new AgentStep(
+                "EXIT_GATE",
+                "Release readiness criteria satisfied",
+                "COMPLETED"
+        ));
+
+        auditTrail.add(new AuditEntry(
+                LocalDateTime.now(),
+                "RELEASE_READINESS_COMPLETED",
+                "COMPLETED",
+                "Final SDLC exit gate passed"
         ));
 
         auditTrail.add(new AuditEntry(
                 LocalDateTime.now(),
                 "WORKFLOW_COMPLETED",
                 "COMPLETED",
-                "Dependency graph completed: "
+                "Completed dependency-driven SDLC graph: "
                         + dependencyGraph.snapshot()
         ));
-
-        ReliabilityMetrics metrics =
-                metrics(
-                        attemptsUsed,
-                        fallbackActivated,
-                        rollbackTriggered,
-                        replanned,
-                        startTime
-                );
 
         return storeAndRespond(
                 sessionId,
@@ -740,16 +1040,182 @@ public class AgentOrchestrationService {
                 requirementAnalysis,
                 workflowType,
                 "COMPLETED",
-                "URL shortening workflow completed successfully",
+                "Agentic SDLC workflow completed successfully and reached release readiness",
                 "http://localhost:8080/"
                         + shortUrl.getShortCode(),
                 approvalRequired,
-                metrics,
+                metrics(
+                        attemptsUsed,
+                        fallbackActivated,
+                        rollbackTriggered,
+                        replanned,
+                        startTime
+                ),
                 steps,
                 tasks,
+                stageArtifacts,
                 auditTrail
         );
     }
+
+    // =========================================================
+    // SDLC DEPENDENCY GRAPH
+    // =========================================================
+
+    private DependencyGraph buildSdlcDependencyGraph() {
+
+        DependencyGraph graph =
+                new DependencyGraph();
+
+        graph.addTask(
+                "REQUIREMENTS",
+                List.of()
+        );
+
+        graph.addTask(
+                "DESIGN",
+                List.of("REQUIREMENTS")
+        );
+
+        /*
+         * These two branches intentionally share DESIGN as
+         * their dependency and can execute in parallel.
+         */
+        graph.addTask(
+                "IMPLEMENTATION",
+                List.of("DESIGN")
+        );
+
+        graph.addTask(
+                "TEST_PLAN",
+                List.of("DESIGN")
+        );
+
+        /*
+         * Synchronization point:
+         * testing requires BOTH parallel branches.
+         */
+        graph.addTask(
+                "TESTING",
+                List.of(
+                        "IMPLEMENTATION",
+                        "TEST_PLAN"
+                )
+        );
+
+        graph.addTask(
+                "DOCUMENTATION",
+                List.of("TESTING")
+        );
+
+        graph.addTask(
+                "RELEASE_READINESS",
+                List.of("DOCUMENTATION")
+        );
+
+        return graph;
+    }
+
+    private void requireReady(
+            DependencyGraph graph,
+            String taskId,
+            List<String> completedTasks) {
+
+        if (!graph.isReady(
+                taskId,
+                completedTasks)) {
+
+            throw new IllegalStateException(
+                    "Task "
+                            + taskId
+                            + " cannot execute because dependencies are incomplete: "
+                            + graph.getDependencies(taskId)
+            );
+        }
+    }
+
+    // =========================================================
+    // REVIEWABLE SDLC ARTIFACTS
+    // =========================================================
+
+    private String buildRequirementsArtifact(
+            RequirementAnalysis analysis) {
+
+        return "Normalized requirement: "
+                + analysis.normalizedRequirement()
+                + ". Scenario: "
+                + analysis.scenarioType()
+                + ". Assumptions: "
+                + analysis.assumptions()
+                + ". Impacted components: "
+                + analysis.impactedComponents();
+    }
+
+    private String buildDesignArtifact(
+            ScenarioType scenarioType,
+            RequirementAnalysis analysis) {
+
+        if (scenarioType ==
+                ScenarioType.BROWNFIELD) {
+
+            return "Brownfield design: preserve existing API and persisted-data behavior; "
+                    + "evaluate changes across "
+                    + analysis.impactedComponents()
+                    + "; maintain controller-service-repository separation; "
+                    + "apply validation and governance before persistence.";
+        }
+
+        return "Greenfield design: REST controller -> service -> repository -> PostgreSQL; "
+                + "agentic orchestration coordinates requirements, design, implementation, "
+                + "testing, documentation and release-readiness stages; "
+                + "short codes remain unique and redirects use persisted mappings.";
+    }
+
+    private String buildImplementationArtifact(
+            ScenarioType scenarioType,
+            String url,
+            WorkflowType workflowType) {
+
+        return "Implementation plan for "
+                + scenarioType
+                + ": validate and normalize input URL '"
+                + url
+                + "', apply policy guardrails, execute "
+                + workflowType
+                + " persistence through UrlShortenerService, "
+                + "use bounded retries for execution failures, "
+                + "and verify the persisted result before downstream release stages.";
+    }
+
+    private String buildTestPlanArtifact(
+            WorkflowType workflowType) {
+
+        return "Test plan: verify valid URL creation, invalid URL rejection, "
+                + "policy enforcement, short-code generation, persistence, redirect behavior, "
+                + "analytics behavior, retry/failure handling, dynamic replanning"
+                + (workflowType == WorkflowType.EXPIRING_URL
+                ? ", expiration behavior and approval controls."
+                : ".");
+    }
+
+    private String buildDocumentationArtifact(
+            ScenarioType scenarioType,
+            WorkflowType workflowType,
+            String effectiveUrl) {
+
+        return "Documented scenario="
+                + scenarioType
+                + ", workflow="
+                + workflowType
+                + ", effective execution URL="
+                + effectiveUrl
+                + ". Include architecture, dependency graph, governance gates, "
+                + "testing strategy, assumptions, limitations and release-readiness decision.";
+    }
+
+    // =========================================================
+    // DYNAMIC REPLANNING
+    // =========================================================
 
     private ReplanningDecision replanForInvalidUrl(
             String url) {
@@ -760,41 +1226,28 @@ public class AgentOrchestrationService {
             return new ReplanningDecision(
                     true,
                     "URL did not contain a scheme",
-                    "Replan validation by evaluating the URL with an HTTPS scheme"
+                    "Normalize the execution input with HTTPS and re-run dependent validation"
             );
         }
 
         return new ReplanningDecision(
-                true,
+                false,
                 "Initial URL validation failed",
                 "No safe automatic correction available; preserve failure path"
         );
     }
 
-    private boolean isValidUrlAfterReplan(
-            String url) {
-
-        if (url == null ||
-                url.isBlank()) {
-
-            return false;
-        }
-
-        if (!url.contains("://")) {
-            return isValidUrl(
-                    "https://" + url
-            );
-        }
-
-        return false;
-    }
+    // =========================================================
+    // VALIDATION / POLICY
+    // =========================================================
 
     private boolean isValidUrl(
             String url) {
 
         try {
 
-            URI uri = URI.create(url);
+            URI uri =
+                    URI.create(url);
 
             String scheme =
                     uri.getScheme();
@@ -818,6 +1271,12 @@ public class AgentOrchestrationService {
     private boolean passesPolicy(
             String url) {
 
+        if (url == null ||
+                url.isBlank()) {
+
+            return false;
+        }
+
         String lower =
                 url.toLowerCase();
 
@@ -827,6 +1286,10 @@ public class AgentOrchestrationService {
                 &&
                 !lower.startsWith("data:");
     }
+
+    // =========================================================
+    // SCENARIO / REQUIREMENT ANALYSIS
+    // =========================================================
 
     private ScenarioType determineScenario(
             AgentRequest request) {
@@ -923,6 +1386,10 @@ public class AgentOrchestrationService {
         );
     }
 
+    // =========================================================
+    // RELIABILITY METRICS
+    // =========================================================
+
     private ReliabilityMetrics metrics(
             int attemptsUsed,
             boolean fallbackActivated,
@@ -947,6 +1414,10 @@ public class AgentOrchestrationService {
         );
     }
 
+    // =========================================================
+    // STATEFUL SESSION STORAGE / RESPONSE
+    // =========================================================
+
     private AgentResponse storeAndRespond(
             String sessionId,
             AgentRequest request,
@@ -960,6 +1431,7 @@ public class AgentOrchestrationService {
             ReliabilityMetrics reliabilityMetrics,
             List<AgentStep> steps,
             List<AgentTask> tasks,
+            List<StageArtifact> stageArtifacts,
             List<AuditEntry> auditTrail) {
 
         OrchestrationSession session =
@@ -975,6 +1447,7 @@ public class AgentOrchestrationService {
                         reliabilityMetrics,
                         List.copyOf(steps),
                         List.copyOf(tasks),
+                        List.copyOf(stageArtifacts),
                         List.copyOf(auditTrail)
                 );
 
@@ -994,9 +1467,10 @@ public class AgentOrchestrationService {
                 shortUrl,
                 approvalRequired,
                 reliabilityMetrics,
-                steps,
-                tasks,
-                auditTrail
+                List.copyOf(steps),
+                List.copyOf(tasks),
+                List.copyOf(stageArtifacts),
+                List.copyOf(auditTrail)
         );
     }
 

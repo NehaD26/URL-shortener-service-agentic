@@ -15,6 +15,7 @@ public record AgentResponse(
         ReliabilityMetrics reliabilityMetrics,
         List<AgentStep> steps,
         List<AgentTask> tasks,
+        List<StageArtifact> stageArtifacts,
         List<AuditEntry> auditTrail
 ) {
 }
